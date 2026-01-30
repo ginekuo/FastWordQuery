@@ -56,6 +56,20 @@ body {
   max-width: 980px;
   margin: 0 auto;
   border: 1px solid #e2e8f0;
+DEFAULT_CSS = """
+body {
+  font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  margin: 24px;
+  color: #1f2937;
+  background: #f8fafc;
+}
+.card {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08);
+  padding: 20px 24px;
+  max-width: 900px;
+  margin: 0 auto;
 }
 .header {
   display: flex;
@@ -69,6 +83,9 @@ body {
   font-weight: 750;
   color: #0b1220;
   letter-spacing: 0.3px;
+  font-size: 32px;
+  font-weight: 700;
+  color: #0f172a;
 }
 .meta {
   font-size: 13px;
@@ -106,6 +123,21 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  font-size: 16px;
+}
+.pron span {
+  background: #e2e8f0;
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+.section {
+  margin-top: 20px;
+}
+.section-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: #1e3a8a;
 }
 .definitions {
   list-style: none;
@@ -146,6 +178,13 @@ body {
   color: #1d4ed8;
   font-size: 13px;
   margin-right: 6px;
+  gap: 10px;
+}
+.definition {
+  background: #f1f5f9;
+  border-radius: 10px;
+  padding: 12px 14px;
+  line-height: 1.5;
 }
 .media {
   display: flex;
@@ -207,6 +246,9 @@ def render_html(data: Dict[str, object], css_path: Optional[str]) -> str:
         def_list = "\n".join(format_definition(i + 1, definition) for i, definition in enumerate(defs))
     else:
         def_list = "<li class=\"definition\"><div class=\"definition-text\">No definitions found.</div></li>"
+    def_list = "\n".join(f"<li class=\"definition\">{definition}</li>" for definition in defs) or (
+        "<li class=\"definition\">No definitions found.</li>"
+    )
 
     media_parts = []
     if thumb_url:
@@ -235,12 +277,14 @@ def render_html(data: Dict[str, object], css_path: Optional[str]) -> str:
     </div>
     <div class="section">
       <div class="section-title">📘 Definitions</div>
+      <div class="section-title">Definitions</div>
       <ul class="definitions">
         {def_list}
       </ul>
     </div>
     <div class="section">
       <div class="section-title">🖼️ Images</div>
+      <div class="section-title">Images</div>
       <div class="media">
         {media_html}
       </div>
@@ -265,6 +309,7 @@ def extract_definitions(
     guideword: Optional[str],
     guideword_provider=None,
 ) -> List[str]:
+def extract_definitions(sense_body: Tag, pos_gram: str, runon_title: Optional[str]) -> List[str]:
     items: List[str] = []
 
     def extract_sense(block: Tag, phrase: Optional[str] = None) -> None:
@@ -302,6 +347,7 @@ def extract_definitions(
                 for label in parent_block.find_all("span", class_="lab"):
                     if label.get_text(strip=True):
                         label_tags.append(label.get_text(strip=True))
+        def_info = def_info_tag.get_text().replace("›", "") if def_info_tag else ""
         definition = block.find("div", class_="def")
         translation = block.find("span", class_="trans")
         examples = block.find_all("div", class_="examp dexamp")
@@ -341,6 +387,19 @@ def extract_definitions(
         definition_text = "\n".join(text_blocks).strip()
         full_text = " ".join(part for part in [tag_text, definition_text] if part)
         items.append(full_text)
+        parts = [
+            f"[{pos_gram}]" if pos_gram else "",
+            f"[{runon_title}]" if runon_title else "",
+            f"[{phrase}]" if phrase else "",
+            f"[{def_info.strip()}]" if def_info.strip() else "",
+            definition.get_text() if definition else "",
+            translation.get_text() if translation else "",
+        ]
+        example_text = " ".join(e.get_text() for e in examples if e)
+        if example_text:
+            parts.append(example_text)
+
+        items.append(" ".join(p for p in parts if p))
 
     for block in sense_body:
         extract_sense(block)
@@ -427,6 +486,8 @@ def parse_cambridge(html: str, is_english: bool) -> Dict[str, object]:
                         guideword_provider=next_guideword,
                     )
                 )
+            if sense_body:
+                result["definitions"].extend(extract_definitions(sense_body, pos_gram, runon_title))
 
             image = sense.find("img", class_="lightboxLink")
             if image:
