@@ -16,6 +16,14 @@ pip install requests beautifulsoup4
 python scripts/standalone_cambridge.py test --pretty
 ```
 
+### HTML + CSS 输出（美化）
+
+```bash
+python scripts/standalone_cambridge.py test --html-out cambridge.html --css-out cambridge.css
+```
+
+会生成 `cambridge.html` 和 `cambridge.css`，HTML 会自动引用对应的 CSS 文件。
+
 ### Language Options
 
 - `en`: English-English
