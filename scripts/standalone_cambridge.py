@@ -33,6 +33,14 @@ DEFAULT_HEADERS = {
     )
 }
 
+
+def normalize_text(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+    return text
+
 DEFAULT_CSS = """
 body {
   font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -250,7 +258,13 @@ def fetch_html(url: str, timeout: int = 10) -> str:
     return response.text
 
 
-def extract_definitions(sense_body: Tag, pos_gram: str, runon_title: Optional[str]) -> List[str]:
+def extract_definitions(
+    sense_body: Tag,
+    pos_gram: str,
+    runon_title: Optional[str],
+    guideword: Optional[str],
+    guideword_provider=None,
+) -> List[str]:
     items: List[str] = []
 
     def extract_sense(block: Tag, phrase: Optional[str] = None) -> None:
@@ -273,24 +287,60 @@ def extract_definitions(sense_body: Tag, pos_gram: str, runon_title: Optional[st
             return
 
         def_info_tag = block.find("span", class_="def-info")
-        def_info = def_info_tag.get_text().replace("›", "") if def_info_tag else ""
+        def_info = (
+            normalize_text(def_info_tag.get_text(" ", strip=True).replace("›", ""))
+            if def_info_tag
+            else ""
+        )
+        label_tags = []
+        for label in block.find_all("span", class_="lab"):
+            if label.get_text(strip=True):
+                label_tags.append(label.get_text(strip=True))
+        if not label_tags:
+            parent_block = block.find_parent("div", class_="pr")
+            if parent_block:
+                for label in parent_block.find_all("span", class_="lab"):
+                    if label.get_text(strip=True):
+                        label_tags.append(label.get_text(strip=True))
         definition = block.find("div", class_="def")
         translation = block.find("span", class_="trans")
         examples = block.find_all("div", class_="examp dexamp")
 
-        parts = [
-            f"[{pos_gram}]" if pos_gram else "",
-            f"[{runon_title}]" if runon_title else "",
-            f"[{phrase}]" if phrase else "",
-            f"[{def_info.strip()}]" if def_info.strip() else "",
-            definition.get_text() if definition else "",
-            translation.get_text() if translation else "",
-        ]
-        example_text = " ".join(e.get_text() for e in examples if e)
-        if example_text:
-            parts.append(example_text)
+        guideword_for_block = guideword
+        parent_dsense = block.find_parent("div", class_=lambda c: c and "dsense" in c)
+        if parent_dsense:
+            guideword_tag = parent_dsense.find("span", class_="guideword")
+            if guideword_tag:
+                guideword_for_block = normalize_text(guideword_tag.get_text(" ", strip=True))
+        if not guideword_for_block and guideword_provider:
+            guideword_for_block = guideword_provider()
 
-        items.append(" ".join(p for p in parts if p))
+        tags = [
+            pos_gram,
+            runon_title,
+            phrase,
+            guideword_for_block,
+            def_info.strip(),
+            *label_tags,
+        ]
+        tag_text = " ".join(f"[{tag}]" for tag in tags if tag)
+        main_text_parts = []
+        if definition and definition.get_text(" ", strip=True):
+            main_text_parts.append(normalize_text(definition.get_text(" ", strip=True)))
+        if translation and translation.get_text(" ", strip=True):
+            main_text_parts.append(normalize_text(translation.get_text(" ", strip=True)))
+
+        example_lines = [
+            f"- {normalize_text(e.get_text(' ', strip=True))}"
+            for e in examples
+            if e and e.get_text(" ", strip=True)
+        ]
+        text_blocks = [" ".join(main_text_parts).strip()] if main_text_parts else []
+        text_blocks.extend(example_lines)
+
+        definition_text = "\n".join(text_blocks).strip()
+        full_text = " ".join(part for part in [tag_text, definition_text] if part)
+        items.append(full_text)
 
     for block in sense_body:
         extract_sense(block)
@@ -313,6 +363,20 @@ def parse_cambridge(html: str, is_english: bool) -> Dict[str, object]:
         return result
 
     elements = element.find_all("div", class_="entry-body__el")
+    guidewords = [
+        normalize_text(tag.get_text(" ", strip=True))
+        for tag in element.find_all("span", class_="guideword")
+        if tag.get_text(strip=True)
+    ]
+    guideword_index = 0
+
+    def next_guideword():
+        nonlocal guideword_index
+        if guideword_index < len(guidewords):
+            value = guidewords[guideword_index]
+            guideword_index += 1
+            return value
+        return None
     header_found = False
     for entry in elements:
         if not entry:
@@ -349,8 +413,20 @@ def parse_cambridge(html: str, is_english: bool) -> Dict[str, object]:
                 runon_title = runon_header.get_text() if runon_header else None
 
             sense_body = sense.find("div", class_=re.compile("sense-body|runon-body pad-indent"))
+            guideword = None
+            guideword_tags = sense.find_all("span", class_="guideword")
+            if len(guideword_tags) == 1:
+                guideword = normalize_text(guideword_tags[0].get_text(" ", strip=True))
             if sense_body:
-                result["definitions"].extend(extract_definitions(sense_body, pos_gram, runon_title))
+                result["definitions"].extend(
+                    extract_definitions(
+                        sense_body,
+                        pos_gram,
+                        runon_title,
+                        guideword,
+                        guideword_provider=next_guideword,
+                    )
+                )
 
             image = sense.find("img", class_="lightboxLink")
             if image:
