@@ -33,6 +33,29 @@ DEFAULT_HEADERS = {
     )
 }
 
+
+def normalize_text(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+    return text
+
+DEFAULT_CSS = """
+body {
+  font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  margin: 32px;
+  color: #0f172a;
+  background: #f1f5f9;
+}
+.card {
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  padding: 28px 32px;
+  max-width: 980px;
+  margin: 0 auto;
+  border: 1px solid #e2e8f0;
 DEFAULT_CSS = """
 body {
   font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -56,6 +79,10 @@ body {
   gap: 12px;
 }
 .word {
+  font-size: 36px;
+  font-weight: 750;
+  color: #0b1220;
+  letter-spacing: 0.3px;
   font-size: 32px;
   font-weight: 700;
   color: #0f172a;
@@ -64,11 +91,38 @@ body {
   font-size: 13px;
   color: #64748b;
 }
+.meta a {
+  color: #2563eb;
+  text-decoration: none;
+}
+.meta a:hover {
+  text-decoration: underline;
+}
 .pron {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
   margin-top: 12px;
+  font-size: 15px;
+}
+.pron span {
+  background: #e0f2fe;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: #0f172a;
+  border: 1px solid #bae6fd;
+}
+.section {
+  margin-top: 24px;
+}
+.section-title {
+  font-size: 18px;
+  font-weight: 650;
+  margin-bottom: 12px;
+  color: #1e3a8a;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 16px;
 }
 .pron span {
@@ -90,6 +144,40 @@ body {
   padding: 0;
   margin: 0;
   display: grid;
+  gap: 12px;
+}
+.definition {
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 14px 16px;
+  line-height: 1.6;
+  border: 1px solid #e2e8f0;
+  display: grid;
+  gap: 6px;
+}
+.definition-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tag {
+  background: #ede9fe;
+  color: #5b21b6;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #ddd6fe;
+}
+.definition-text {
+  font-size: 15px;
+  color: #0f172a;
+  white-space: pre-line;
+}
+.definition-index {
+  font-weight: 700;
+  color: #1d4ed8;
+  font-size: 13px;
+  margin-right: 6px;
   gap: 10px;
 }
 .definition {
@@ -107,6 +195,11 @@ body {
   max-width: 240px;
   border-radius: 8px;
   border: 1px solid #e2e8f0;
+  background: #fff;
+}
+.grid {
+  display: grid;
+  gap: 12px;
 }
 .footer {
   margin-top: 16px;
@@ -128,6 +221,31 @@ def render_html(data: Dict[str, object], css_path: Optional[str]) -> str:
         f'<link rel="stylesheet" href="{css_path}">' if css_path else "<style>" + DEFAULT_CSS + "</style>"
     )
 
+    def format_definition(index: int, definition: str) -> str:
+        tag_match = re.match(r"^((?:\\[[^\\]]+\\]\\s*)+)(.*)$", definition)
+        tags_html = ""
+        main_text = definition.strip()
+        if tag_match:
+            tags = re.findall(r"\\[([^\\]]+)\\]", tag_match.group(1))
+            tags_html = "".join(f"<span class=\"tag\">{tag}</span>" for tag in tags)
+            main_text = tag_match.group(2).strip()
+        header_html = (
+            f"<div class=\"definition-header\">"
+            f"<span class=\"definition-index\">{index:02d}</span>{tags_html}</div>"
+            if tags_html
+            else f"<div class=\"definition-header\"><span class=\"definition-index\">{index:02d}</span></div>"
+        )
+        return (
+            "<li class=\"definition\">"
+            f"{header_html}"
+            f"<div class=\"definition-text\">{main_text or 'No definition text.'}</div>"
+            "</li>"
+        )
+
+    if defs:
+        def_list = "\n".join(format_definition(i + 1, definition) for i, definition in enumerate(defs))
+    else:
+        def_list = "<li class=\"definition\"><div class=\"definition-text\">No definitions found.</div></li>"
     def_list = "\n".join(f"<li class=\"definition\">{definition}</li>" for definition in defs) or (
         "<li class=\"definition\">No definitions found.</li>"
     )
@@ -158,12 +276,14 @@ def render_html(data: Dict[str, object], css_path: Optional[str]) -> str:
       <span>BrE: {pronunciations.get("BrE", "")}</span>
     </div>
     <div class="section">
+      <div class="section-title">📘 Definitions</div>
       <div class="section-title">Definitions</div>
       <ul class="definitions">
         {def_list}
       </ul>
     </div>
     <div class="section">
+      <div class="section-title">🖼️ Images</div>
       <div class="section-title">Images</div>
       <div class="media">
         {media_html}
@@ -182,6 +302,13 @@ def fetch_html(url: str, timeout: int = 10) -> str:
     return response.text
 
 
+def extract_definitions(
+    sense_body: Tag,
+    pos_gram: str,
+    runon_title: Optional[str],
+    guideword: Optional[str],
+    guideword_provider=None,
+) -> List[str]:
 def extract_definitions(sense_body: Tag, pos_gram: str, runon_title: Optional[str]) -> List[str]:
     items: List[str] = []
 
@@ -205,11 +332,61 @@ def extract_definitions(sense_body: Tag, pos_gram: str, runon_title: Optional[st
             return
 
         def_info_tag = block.find("span", class_="def-info")
+        def_info = (
+            normalize_text(def_info_tag.get_text(" ", strip=True).replace("›", ""))
+            if def_info_tag
+            else ""
+        )
+        label_tags = []
+        for label in block.find_all("span", class_="lab"):
+            if label.get_text(strip=True):
+                label_tags.append(label.get_text(strip=True))
+        if not label_tags:
+            parent_block = block.find_parent("div", class_="pr")
+            if parent_block:
+                for label in parent_block.find_all("span", class_="lab"):
+                    if label.get_text(strip=True):
+                        label_tags.append(label.get_text(strip=True))
         def_info = def_info_tag.get_text().replace("›", "") if def_info_tag else ""
         definition = block.find("div", class_="def")
         translation = block.find("span", class_="trans")
         examples = block.find_all("div", class_="examp dexamp")
 
+        guideword_for_block = guideword
+        parent_dsense = block.find_parent("div", class_=lambda c: c and "dsense" in c)
+        if parent_dsense:
+            guideword_tag = parent_dsense.find("span", class_="guideword")
+            if guideword_tag:
+                guideword_for_block = normalize_text(guideword_tag.get_text(" ", strip=True))
+        if not guideword_for_block and guideword_provider:
+            guideword_for_block = guideword_provider()
+
+        tags = [
+            pos_gram,
+            runon_title,
+            phrase,
+            guideword_for_block,
+            def_info.strip(),
+            *label_tags,
+        ]
+        tag_text = " ".join(f"[{tag}]" for tag in tags if tag)
+        main_text_parts = []
+        if definition and definition.get_text(" ", strip=True):
+            main_text_parts.append(normalize_text(definition.get_text(" ", strip=True)))
+        if translation and translation.get_text(" ", strip=True):
+            main_text_parts.append(normalize_text(translation.get_text(" ", strip=True)))
+
+        example_lines = [
+            f"- {normalize_text(e.get_text(' ', strip=True))}"
+            for e in examples
+            if e and e.get_text(" ", strip=True)
+        ]
+        text_blocks = [" ".join(main_text_parts).strip()] if main_text_parts else []
+        text_blocks.extend(example_lines)
+
+        definition_text = "\n".join(text_blocks).strip()
+        full_text = " ".join(part for part in [tag_text, definition_text] if part)
+        items.append(full_text)
         parts = [
             f"[{pos_gram}]" if pos_gram else "",
             f"[{runon_title}]" if runon_title else "",
@@ -245,6 +422,20 @@ def parse_cambridge(html: str, is_english: bool) -> Dict[str, object]:
         return result
 
     elements = element.find_all("div", class_="entry-body__el")
+    guidewords = [
+        normalize_text(tag.get_text(" ", strip=True))
+        for tag in element.find_all("span", class_="guideword")
+        if tag.get_text(strip=True)
+    ]
+    guideword_index = 0
+
+    def next_guideword():
+        nonlocal guideword_index
+        if guideword_index < len(guidewords):
+            value = guidewords[guideword_index]
+            guideword_index += 1
+            return value
+        return None
     header_found = False
     for entry in elements:
         if not entry:
@@ -281,6 +472,20 @@ def parse_cambridge(html: str, is_english: bool) -> Dict[str, object]:
                 runon_title = runon_header.get_text() if runon_header else None
 
             sense_body = sense.find("div", class_=re.compile("sense-body|runon-body pad-indent"))
+            guideword = None
+            guideword_tags = sense.find_all("span", class_="guideword")
+            if len(guideword_tags) == 1:
+                guideword = normalize_text(guideword_tags[0].get_text(" ", strip=True))
+            if sense_body:
+                result["definitions"].extend(
+                    extract_definitions(
+                        sense_body,
+                        pos_gram,
+                        runon_title,
+                        guideword,
+                        guideword_provider=next_guideword,
+                    )
+                )
             if sense_body:
                 result["definitions"].extend(extract_definitions(sense_body, pos_gram, runon_title))
 
